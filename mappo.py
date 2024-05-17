@@ -69,8 +69,6 @@ class Args:
     """coefficient of the value function"""
     max_grad_norm: float = 0.5
     """the maximum norm for the gradient clipping"""
-    target_kl: float = None
-    """the target KL divergence threshold"""
     num_envs: int = 1
     """the number of parallel game environments"""
 
@@ -128,6 +126,13 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
+def make_global_obs(local_obs: Union[np.ndarray, torch.Tensor]):
+    '''local_obs: tensor of shape (num_envs, num_agents, size_obs)'''
+    batch_size, num_agents, size_obs = local_obs.shape
+    shared_obs_indices = [1, 2]
+    local_obs_indices = [i*size_obs for i in range(num_agents)]
+    return local_obs.reshape(batch_size,  -1)[:, shared_obs_indices + local_obs_indices]
+
 class FilteredStep(StepPercentage):
     def __init__(self, reference: float = 0.0, threshold: float = 0.0):
         super().__init__(reference)
@@ -141,6 +146,26 @@ class FilteredStep(StepPercentage):
                 shaped_reward = np.sign(percentage)
         self.reference = reward
         return shaped_reward
+    
+class SharedCritic(nn.Module):
+    def __init__(self, observation_space, hidden_layers, features_extractor_params = {}):
+        super().__init__()
+        features_extractor_params["max_dim"] = int(features_extractor_params["max_dim"] * np.sqrt(args.num_agents))
+        features_extractor = FourierExtractor(observation_space, **features_extractor_params)
+        # input_layers = [81] + list(hidden_layers)
+        input_layers = [features_extractor.features_dim] + list(hidden_layers)
+        self.critic = nn.Sequential(
+            features_extractor,
+            # layer_init(nn.Linear(observation_space.shape[0], 81)),
+            *[
+                nn.Sequential(layer_init(nn.Linear(in_dim, out_dim)), nn.Tanh())
+                for in_dim, out_dim in zip(input_layers[-1:], input_layers[1:])
+            ],
+            layer_init(nn.Linear(input_layers[-1], 1), std=1.0),
+        )
+
+    def get_value(self, x):
+        return self.critic(x)
 
 class Agent(nn.Module):
     def __init__(self, observation_space, action_space, hidden_layers, features_extractor_params = {}):
@@ -156,35 +181,23 @@ class Agent(nn.Module):
         self.register_buffer(
             "action_bias", torch.tensor((action_space.high + action_space.low) / 2.0, dtype=torch.float32)
         )
-        input_layers = [features_extractor.features_dim] + list(hidden_layers)
-        self.critic = nn.Sequential(
-            features_extractor,
-            *[
-                nn.Sequential(layer_init(nn.Linear(in_dim, out_dim)), nn.Tanh())
-                for in_dim, out_dim in zip(input_layers[-1:], hidden_layers)
-            ],
-            layer_init(nn.Linear(input_layers[-1], 1), std=1.0),
-        )
+        input_layers = [features_extractor.features_dim] + list(hidden_layers) + [features_extractor.features_dim]
         self.actor = nn.Sequential(
             features_extractor,
             *[
                 nn.Sequential(layer_init(nn.Linear(in_dim, out_dim)), nn.Tanh())
                 for in_dim, out_dim in zip(input_layers[-1:], hidden_layers)
             ],
-            layer_init(nn.Linear(input_layers[-1], action_dim), std=1.0),
+            layer_init(nn.Linear(features_extractor.features_dim, action_dim), std=1.0),
         )
 
-    def get_value(self, x):
-        return self.critic(x)
-
-    def get_action_and_value(self, x, action=None, deterministic=False):
+    def get_action(self, x, deterministic=False):
         action_out = self.actor(x)
         action_mean = action_out * self.action_scale + self.action_bias
         action_std = torch.ones_like(action_mean) * self.log_std.exp()
         distribution = Normal(action_mean, action_std)
-        if action is None:
-            action = distribution.mode() if deterministic else distribution.rsample()
-        return action, distribution.log_prob(action).sum(-1), distribution.entropy(), self.critic(x)
+        action = distribution.mode() if deterministic else distribution.rsample()
+        return action, distribution.log_prob(action).sum(-1), distribution.entropy()
 
 
 if __name__ == "__main__":
@@ -230,6 +243,12 @@ if __name__ == "__main__":
     action_space = env.action_space(env.possible_agents[0])["yaw"]
     partial_obs_extractor = YawExtractor(obs_space)
     partial_obs_space = partial_obs_extractor.observation_space
+    global_obs_low = make_global_obs(np.tile(partial_obs_space.low[:, None], args.num_agents).T[None,:])
+    global_obs_high = make_global_obs(np.tile(partial_obs_space.high[:, None], args.num_agents).T[None,:])
+    global_obs_space = gym.spaces.Box(
+        low=global_obs_low.flatten(), 
+        high=global_obs_high.flatten(), 
+    )
     features_extractor_params = {
         "order":args.fourier_order,
         "hyper": args.fourier_hyper,
@@ -242,10 +261,13 @@ if __name__ == "__main__":
         Agent(partial_obs_space, action_space, hidden_layer_nn, features_extractor_params).to(device)
         for _ in range(args.num_agents)
     ]
-    optimizers = [
+    shared_critic = SharedCritic(global_obs_space, hidden_layer_nn, features_extractor_params).to(device)
+    actor_optimizers = [
         optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
         for agent in agents
     ]
+    critic_optimizer = optim.Adam(shared_critic.parameters(), lr=args.learning_rate, eps=1e-5)
+
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps+1, args.num_envs, args.num_agents) + partial_obs_space.shape).to(device)
@@ -271,7 +293,7 @@ if __name__ == "__main__":
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
             lrnow = frac * args.learning_rate
-            for optimizer in optimizers:
+            for optimizer in actor_optimizers + [critic_optimizer]:
                 optimizer.param_groups[0]["lr"] = lrnow
 
         values[0] = values[-1]
@@ -293,12 +315,10 @@ if __name__ == "__main__":
                 for idagent, agent in enumerate(agents):
                     last_obs, reward, terminations, truncations, infos = env.last()
                     last_obs = torch.Tensor(partial_obs_extractor(last_obs)).to(device)
-                    action, logprob, _, value = agent.get_action_and_value(last_obs)
+                    action, logprob, _ = agent.get_action(last_obs)
                     last_done = np.logical_or(terminations, truncations)
                     last_done = torch.Tensor([last_done.astype(int)]).to(device)
 
-                    # store values
-                    values[step, :, idagent] = value.flatten()
                     logprobs[step, :, idagent] = logprob
                     obs[step, :, idagent] = last_obs
                     dones[step, :, idagent] = last_done
@@ -312,8 +332,13 @@ if __name__ == "__main__":
                     env.step(make_yaw_action(action))
                     actions[step, :, idagent] = action
             
-            writer.add_scalar(f"farm/power_total", sum(powers), global_step)
-
+                writer.add_scalar(f"farm/power_total", sum(powers), global_step)
+            
+                # store values
+                # drop duplicates ?
+                global_obs = make_global_obs(obs[step])
+                value = shared_critic.get_value(global_obs)
+                values[step, :, :] = value.flatten()
 
         # bootstrap value for all agents and compute GAE
         lastgaelam = torch.zeros((args.num_envs, args.num_agents)).to(device)
@@ -327,7 +352,7 @@ if __name__ == "__main__":
             returns = advantages + values
 
         # flatten the batch
-        b_obs = obs[:-1].reshape((-1,args.num_agents) + partial_obs_space.shape)
+        b_obs = obs[:-1].reshape((-1, args.num_agents) + partial_obs_space.shape)
         b_logprobs = logprobs[:-1].reshape(-1, args.num_agents)
         b_actions = actions[:-1].reshape((-1, args.num_agents) + action_space.shape)
         b_advantages = advantages[:-1].reshape(-1, args.num_agents)
@@ -336,16 +361,16 @@ if __name__ == "__main__":
 
         # Optimizing the policy and value network
 
-        for idagent, agent in enumerate(agents):
+        for epoch in range(args.update_epochs):
             b_inds = np.arange(args.batch_size)
             clipfracs = []
-            for epoch in range(args.update_epochs):
-                np.random.shuffle(b_inds)
-                for start in range(0, args.batch_size, args.minibatch_size):
-                    end = start + args.minibatch_size
-                    mb_inds = b_inds[start:end]
+            np.random.shuffle(b_inds)
+            for start in range(0, args.batch_size, args.minibatch_size):
+                end = start + args.minibatch_size
+                mb_inds = b_inds[start:end]
 
-                    _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds, idagent], b_actions[mb_inds, idagent])
+                for idagent, agent in enumerate(agents):
+                    _, newlogprob, entropy = agent.get_action(b_obs[mb_inds, idagent])
                     logratio = newlogprob - b_logprobs[mb_inds, idagent]
                     ratio = logratio.exp()
 
@@ -363,52 +388,62 @@ if __name__ == "__main__":
                     pg_loss1 = -mb_advantages * ratio
                     pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
                     pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-                    # Value loss
-                    newvalue = newvalue.view(-1)
-                    if args.clip_vloss:
-                        v_loss_unclipped = (newvalue - b_returns[mb_inds, idagent]) ** 2
-                        v_clipped = b_values[mb_inds, idagent] + torch.clamp(
-                            newvalue - b_values[mb_inds, idagent],
-                            -args.clip_coef,
-                            args.clip_coef,
-                        )
-                        v_loss_clipped = (v_clipped - b_returns[mb_inds, idagent]) ** 2
-                        v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                        v_loss = 0.5 * v_loss_max.mean()
-                    else:
-                        v_loss = 0.5 * ((newvalue - b_returns[mb_inds, idagent]) ** 2).mean()
-
+                
                     entropy_loss = entropy.mean()
-                    loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                    loss = pg_loss - args.ent_coef * entropy_loss
 
-                    optimizers[idagent].zero_grad()
-                    loss.backward()
+                    actor_optimizers[idagent].zero_grad()
+                    pg_loss.backward()
                     nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
-                    optimizers[idagent].step()
+                    actor_optimizers[idagent].step()
 
-                if args.target_kl is not None and approx_kl > args.target_kl:
-                    break
+                    if (epoch == args.update_epochs-1) and (end >= args.batch_size-1):
+                        writer.add_scalar(f"charts/agent_{idagent}/learning_rate", actor_optimizers[idagent].param_groups[0]["lr"], global_step)
+                        writer.add_scalar(f"losses/agent_{idagent}/policy_loss", pg_loss.item(), global_step)
+                        writer.add_scalar(f"losses/agent_{idagent}/entropy", entropy_loss.item(), global_step)
+                        writer.add_scalar(f"losses/agent_{idagent}/old_approx_kl", old_approx_kl.item(), global_step)
+                        writer.add_scalar(f"losses/agent_{idagent}/approx_kl", approx_kl.item(), global_step)
+                        writer.add_scalar(f"losses/agent_{idagent}/clipfrac", np.mean(clipfracs), global_step)
+                
+                # Global Value loss
+                # global_obs = b_obs[mb_inds, :].view(args.minibatch_size, -1)
+                global_obs = make_global_obs(b_obs[mb_inds, :])
+                newvalue = shared_critic.get_value(global_obs)
+                newvalue = newvalue.view(-1)
 
-            y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-            var_y = np.var(y_true)
-            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+                if args.clip_vloss:
+                    # the return/value is the same for all agents
+                    v_loss_unclipped = (newvalue - b_returns[mb_inds, 0]) ** 2
+                    v_clipped = b_values[mb_inds, 0] + torch.clamp(
+                        newvalue - b_values[mb_inds, 0],
+                        -args.clip_coef,
+                        args.clip_coef,
+                    )
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds, 0]) ** 2
+                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                    v_loss = 0.5 * v_loss_max.mean()
+                else:
+                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds, 0]) ** 2).mean()
 
-            # TRY NOT TO MODIFY: record rewards for plotting purposes
-            writer.add_scalar(f"charts/agent_{idagent}/learning_rate", optimizers[idagent].param_groups[0]["lr"], global_step)
-            writer.add_scalar(f"losses/agent_{idagent}/value_loss", v_loss.item(), global_step)
-            writer.add_scalar(f"losses/agent_{idagent}/policy_loss", pg_loss.item(), global_step)
-            writer.add_scalar(f"losses/agent_{idagent}/entropy", entropy_loss.item(), global_step)
-            writer.add_scalar(f"losses/agent_{idagent}/old_approx_kl", old_approx_kl.item(), global_step)
-            writer.add_scalar(f"losses/agent_{idagent}/approx_kl", approx_kl.item(), global_step)
-            writer.add_scalar(f"losses/agent_{idagent}/clipfrac", np.mean(clipfracs), global_step)
-            writer.add_scalar(f"losses/agent_{idagent}/explained_variance", explained_var, global_step)
-        
-            if args.save_model:
-                model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-                for idagent, agent in enumerate(agents):
-                    torch.save(agent.state_dict(), model_path+f"_{idagent}")
-                print(f"model saved to {model_path}")
+                global_v_loss = v_loss * args.vf_coef
+                critic_optimizer.zero_grad()
+                global_v_loss.backward()
+                nn.utils.clip_grad_norm_(shared_critic.parameters(), args.max_grad_norm)
+                critic_optimizer.step()
+
+        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+        var_y = np.var(y_true)
+        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        writer.add_scalar(f"losses/value_loss", global_v_loss.item(), global_step)
+        writer.add_scalar(f"losses/explained_variance", explained_var, global_step)
+    
+        if args.save_model:
+            model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+            for idagent, agent in enumerate(agents):
+                torch.save(agent.state_dict(), model_path+f"_{idagent}")
+            print(f"model saved to {model_path}")
         
         # print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
