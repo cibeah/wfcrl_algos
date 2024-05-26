@@ -19,7 +19,7 @@ from wfcrl.rewards import StepPercentage, RewardShaper
 from wfcrl import environments as envs
 
 from buffer import DelayedRolloutBuffer
-from extractors import FourierExtractor, YawExtractor
+from extractors import FourierExtractor, DfacSPaceExtractor
 from utils import plot_env_history
 
 
@@ -43,7 +43,7 @@ class Args:
     """whether to save model into the `runs/{run_name}` folder"""
 
     # Algorithm specific arguments
-    env_id: str = "Turb3_Row1_Floris"
+    env_id: str = "Dec_Turb3_Row1_Floris"
     """the id of the environment"""
     total_timesteps: int = int(5e3)
     """total timesteps of the experiments"""
@@ -150,18 +150,12 @@ class Agent(nn.Module):
         self.log_std = nn.Parameter(torch.zeros(action_dim), requires_grad=True)
         features_extractor = FourierExtractor(observation_space, **features_extractor_params)
 
-        self.register_buffer(
-            "action_scale", torch.tensor((action_space.high - action_space.low) / 2.0, dtype=torch.float32)
-        )
-        self.register_buffer(
-            "action_bias", torch.tensor((action_space.high + action_space.low) / 2.0, dtype=torch.float32)
-        )
         input_layers = [features_extractor.features_dim] + list(hidden_layers)
         self.critic = nn.Sequential(
             features_extractor,
             *[
                 nn.Sequential(layer_init(nn.Linear(in_dim, out_dim)), nn.Tanh())
-                for in_dim, out_dim in zip(input_layers[-1:], hidden_layers)
+                for in_dim, out_dim in zip(input_layers[:-1], hidden_layers)
             ],
             layer_init(nn.Linear(input_layers[-1], 1), std=1.0),
         )
@@ -169,7 +163,7 @@ class Agent(nn.Module):
             features_extractor,
             *[
                 nn.Sequential(layer_init(nn.Linear(in_dim, out_dim)), nn.Tanh())
-                for in_dim, out_dim in zip(input_layers[-1:], hidden_layers)
+                for in_dim, out_dim in zip(input_layers[:-1], hidden_layers)
             ],
             layer_init(nn.Linear(input_layers[-1], action_dim), std=1.0),
         )
@@ -178,8 +172,7 @@ class Agent(nn.Module):
         return self.critic(x)
 
     def get_action_and_value(self, x, action=None, deterministic=False):
-        action_out = self.actor(x)
-        action_mean = action_out * self.action_scale + self.action_bias
+        action_mean = self.actor(x)
         action_std = torch.ones_like(action_mean) * self.log_std.exp()
         distribution = Normal(action_mean, action_std)
         if action is None:
@@ -226,9 +219,10 @@ if __name__ == "__main__":
 
     
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-    obs_space = env.observation_space(env.possible_agents[0])
+    local_obs_space = env.observation_space(env.possible_agents[0])
+    global_obs_space = env.state_space
     action_space = env.action_space(env.possible_agents[0])["yaw"]
-    partial_obs_extractor = YawExtractor(obs_space)
+    partial_obs_extractor = DfacSPaceExtractor(local_obs_space, global_obs_space)
     partial_obs_space = partial_obs_extractor.observation_space
     features_extractor_params = {
         "order":args.fourier_order,
@@ -260,11 +254,7 @@ if __name__ == "__main__":
     start_time = time.time()
     #TODO: put seed back 
     # env.reset(seed=args.seed)
-    env.reset()
-    # next_obs, *_ = env.last()
-    # next_obs = torch.Tensor(partial_obs_extractor(next_obs)).to(device)
-    # next_done = torch.zeros(args.num_envs).to(device)
-    # step = 0
+    env.reset(options={"wind_speed": 8, "wind_direction": 270})
 
     for iteration in range(1, args.num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -288,11 +278,11 @@ if __name__ == "__main__":
 
             # ALGO LOGIC: action logic
             powers = []
-
             with torch.no_grad():
                 for idagent, agent in enumerate(agents):
                     last_obs, reward, terminations, truncations, infos = env.last()
-                    last_obs = torch.Tensor(partial_obs_extractor(last_obs)).to(device)
+                    global_obs = env.state()
+                    last_obs = torch.Tensor(partial_obs_extractor(last_obs, global_obs)).to(device)
                     action, logprob, _, value = agent.get_action_and_value(last_obs)
                     last_done = np.logical_or(terminations, truncations)
                     last_done = torch.Tensor([last_done.astype(int)]).to(device)
@@ -306,14 +296,16 @@ if __name__ == "__main__":
                     if "power" in infos:
                         powers.append(infos["power"])
                         writer.add_scalar(f"farm/power_T{idagent}", infos["power"], global_step)
-                    writer.add_scalar(f"farm/controls/yaw_T{idagent}", last_obs[0].item(), global_step)
+                    if "load" in infos:
+                        writer.add_scalar(f"farm/load_T{idagent}", sum(np.abs(infos["load"])), global_step)
+                        writer.add_scalar(f"farm/controls/yaw_T{idagent}", last_obs[0].item(), global_step)
 
                     # store next action
                     env.step(make_yaw_action(action))
                     actions[step, :, idagent] = action
             
             writer.add_scalar(f"farm/power_total", sum(powers), global_step)
-
+            writer.add_scalar(f"farm/reward", float(reward[0]), global_step)
 
         # bootstrap value for all agents and compute GAE
         lastgaelam = torch.zeros((args.num_envs, args.num_agents)).to(device)

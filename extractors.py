@@ -21,7 +21,7 @@ class YawExtractor(nn.Module):
         )
 
     def forward(self, obs):
-        return np.concatenate([[obs["yaw"]], obs["wind_measurements"]],0)
+        return np.concatenate([[obs["yaw"]], obs["wind_measurements"].flatten()],0)
 
 class FourierExtractor(nn.Module):
     """
