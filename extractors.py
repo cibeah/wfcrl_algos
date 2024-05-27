@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import itertools
 from typing import Iterable
 
@@ -7,21 +8,48 @@ import torch
 from torch import nn
 from torch.nn.parameter import Parameter
 
-
-
-class YawExtractor(nn.Module):
-    def __init__(self, observation_space):
+class VectorExtractor(nn.Module):
+    """dict-vector mapping for vectors OF DIMENSION 1"""
+    def __init__(self, space):
         super().__init__()
-        yaw_space = observation_space["yaw"]
-        wind_space = observation_space["wind_measurements"]
+        lows = []
+        highs = []
+        size = 0
+        self.keys = OrderedDict()
+        for item, space in space.items():
+            lows.append(space.low)
+            highs.append(space.high)
+            self.keys[item] = [size, size + space.shape[0]]
+            size += space.shape[0]
+
+        self.space = gym.spaces.Box(
+            low=np.concatenate(lows),
+            high=np.concatenate(highs),
+            shape=(size,)
+        )
+
+    def forward(self, dic):
+        return np.concatenate([np.atleast_2d(value) for value in dic.values()],1).squeeze()
+    
+    def make_dict(self, vector):
+        return {
+            key: vector[idx1:idx2]
+            for key, (idx1, idx2) in self.keys.items()
+        }
+
+class DfacSPaceExtractor(nn.Module):
+    def __init__(self, local_observation_space, global_observation_space):
+        super().__init__()
+        yaw_space = local_observation_space["yaw"]
+        wind_space = global_observation_space["freewind_measurements"]
         self.observation_space = gym.spaces.Box(
             low=np.concatenate([yaw_space.low, wind_space.low]),
             high=np.concatenate([yaw_space.high, wind_space.high]),
             shape=(yaw_space.shape[0] + wind_space.shape[0],)
         )
 
-    def forward(self, obs):
-        return np.concatenate([[obs["yaw"]], obs["wind_measurements"].flatten()],0)
+    def forward(self, local_obs, global_obs):
+        return np.concatenate([[local_obs["yaw"]], global_obs["freewind_measurements"].flatten()],0)
 
 class FourierExtractor(nn.Module):
     """

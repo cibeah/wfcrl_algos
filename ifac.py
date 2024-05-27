@@ -101,6 +101,8 @@ class Args:
     """the number of iterations (computed in runtime)"""
     num_agents: int = 1
     """the number of agents in the environment"""
+    reward_shaping: str = ""
+    """Toggle learning rate annealing for policy and value networks"""
     
 def make_yaw_action(action):
     return {"yaw": action.cpu().numpy()}
@@ -114,15 +116,32 @@ class FilteredStep(StepPercentage):
     def __init__(self, reference: float = 0.0, threshold: float = 0.0):
         super().__init__(reference)
         self.threshold = threshold
+        self.name = "filtered_step"
     
     def __call__(self, reward):
         shaped_reward = 0.0
-        if self.reference > 0:
-            percentage = (reward - self.reference) / self.reference
+        if self.reference != 0:
+            percentage = (reward - self.reference) / np.abs(self.reference)
             if np.abs(percentage) > self.threshold:
                 shaped_reward = np.sign(percentage)
         self.reference = reward
         return shaped_reward
+    
+class RewardSum(RewardShaper):
+    def __init__(self, reference: float = 0.0):
+        self.reference = reference
+        self.name = "power_plus_change"
+
+    def __call__(self, reward):
+        if self.reference == 0:
+            shaped_reward = 0.0
+        else:
+            shaped_reward = np.sign((reward - self.reference) / np.abs(self.reference))
+        self.reference = reward
+        return reward + shaped_reward
+
+    def reset(self, reference: float = 0.0):
+        self.reference = reference
 
 class Agent(nn.Module):
     def __init__(self, observation_space, action_space, hidden_layers, features_extractor_params = {}):
@@ -167,14 +186,17 @@ if __name__ == "__main__":
     # args.num_iterations = 
     # args.total_timesteps # TODO divide by dt ?// args.batch_size
     controls = {"yaw": (-args.yaw_max, args.yaw_max, args.action_bound)}
+    # reward_shaper = FilteredStep(threshold=args.reward_tol)
+    reward_shaper = RewardSum()
     env = envs.make(
         args.env_id,
         controls=controls, 
         max_num_steps=args.total_timesteps, 
-        reward_shaper=FilteredStep(threshold=args.reward_tol)
+        reward_shaper=reward_shaper
     )
     args.num_steps = args.total_timesteps
     args.num_agents = env.num_turbines
+    args.reward_shaping = reward_shaper.name
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         # os.environ["HTTPS_PROXY"] = "http://irsrvpxw1-std:8082"

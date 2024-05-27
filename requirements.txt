@@ -6,3 +6,4 @@ tyro==0.5.10
 wfcrl @ git+https://github.com/cibeah/WFCRL.git
 stable-baselines3
 wandb
+seaborn

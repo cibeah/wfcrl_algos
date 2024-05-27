@@ -18,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from wfcrl.rewards import StepPercentage, RewardShaper
 from wfcrl import environments as envs
 
-from extractors import FourierExtractor, DfacSPaceExtractor
+from extractors import VectorExtractor
 from utils import plot_env_history
 
 
@@ -32,37 +32,37 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    track: bool = False
+    track: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "cleanRL"
+    wandb_project_name: str = "Benchmark-WFCRL"
     """the wandb's project name"""
     wandb_entity: str = None
     """the entity (team) of wandb's project"""
-    save_model: bool = False
+    save_model: bool = True
     """whether to save model into the `runs/{run_name}` folder"""
 
     # Algorithm specific arguments
     env_id: str = "Dec_Turb3_Row1_Floris"
     """the id of the environment"""
-    total_timesteps: int = int(5e3)
+    total_timesteps: int = int(5e4)
     """total timesteps of the experiments"""
     learning_rate: float = 3e-4 #7e-4 #
     """the learning rate of the optimizer"""
-    gamma: float = 0.75
+    gamma: float = 0.99
     """the discount factor gamma"""
     gae_lambda: float = 0.95 #0
     """the lambda for the general advantage estimation"""
     num_minibatches: int = 32
     """the number of mini-batches"""
-    update_epochs: int = 4
+    update_epochs: int = 10
     """the K epochs to update the policy"""
-    norm_adv: bool = False
+    norm_adv: bool = True
     """Toggles advantages normalization"""
     clip_coef: float = 0.2
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.01 #0
+    ent_coef: float = 0.0 #0
     """coefficient of the entropy"""
     vf_coef: float = 0.5
     """coefficient of the value function"""
@@ -76,10 +76,6 @@ class Args:
     # DFAC arguments
     pretrained_models: str = None
     """Path to pretrained models"""
-    reward_tol: float = 0.00005
-    """Tolerance threshold for reward function"""
-    action_bound: float = 1
-    """Bounds on the action space"""
     kl_coef:  float = 0.0
     """Weighing coefficient for KL term in loss """ 
     policy: str = "base"
@@ -88,25 +84,13 @@ class Args:
     """Use counter_based exploration"""
     multi_scale: bool = False
     """Use multi scale algorithm"""
-    hidden_layer_nn: Union[bool, tuple[int]] = False #(81,)
+    hidden_layer_nn: Union[bool, tuple[int]] = (64, 64)
     """number of neurons in hidden layer"""
-    yaw_max: int = 40
-    """maximum absolute yawing in state space""" 
-    fourier_order: int = 8
-    """order of Fourier basis"""
-    fourier_maxdim: int = 81
-    """maximum dimension of Fourier basis"""
-    fourier_hyper:  bool = False
-    """use hypernet arch to learn Fourier basis"""
-    fourier_learnable: bool = False
-    """learnable Fourier basis"""
-    fourier_hyper_arch: tuple = (81,)
-    """Architecture of Fourier Hyper"""
     debug: bool = False
     """debug mode saves monitoring logs during training"""
-    num_steps: int = 128 #1
+    num_steps: int = 2048 #1
     """number of available rewards before update"""
-    anneal_lr: bool = False
+    anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
 
     # to be filled in runtime
@@ -118,59 +102,59 @@ class Args:
     """the number of iterations (computed in runtime)"""
     num_agents: int = 1
     """the number of agents in the environment"""
+    reward_shaping: str = ""
+    """Toggle learning rate annealing for policy and value networks"""
     
-def make_yaw_action(action):
-    return {"yaw": action.cpu().numpy()}
-
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
-class FilteredStep(StepPercentage):
+class RewardSum(StepPercentage):
     def __init__(self, reference: float = 0.0, threshold: float = 0.0):
         super().__init__(reference)
         self.threshold = threshold
-    
+        self.name = "power_plus_step"
+
     def __call__(self, reward):
         shaped_reward = 0.0
-        if self.reference > 0:
-            percentage = (reward - self.reference) / self.reference
+        if self.reference != 0.0:
+            percentage = (reward - self.reference) / np.abs(self.reference)
             if np.abs(percentage) > self.threshold:
                 shaped_reward = np.sign(percentage)
         self.reference = reward
-        return shaped_reward
+        return reward + shaped_reward
 
 class Agent(nn.Module):
-    def __init__(self, observation_space, action_space, hidden_layers, features_extractor_params = {}):
+    def __init__(self, observation_space, action_space, hidden_layers):
         super().__init__()
-        action_dim = action_space.shape[0]
+        action_dim = np.prod(action_space.shape)
 
         self.log_std = nn.Parameter(torch.zeros(action_dim), requires_grad=True)
-        features_extractor = FourierExtractor(observation_space, **features_extractor_params)
+        self.observation_space = observation_space
 
-        input_layers = [features_extractor.features_dim] + list(hidden_layers)
+        input_layers = [np.array(observation_space.shape).prod()] + list(hidden_layers)
         self.critic = nn.Sequential(
-            features_extractor,
             *[
                 nn.Sequential(layer_init(nn.Linear(in_dim, out_dim)), nn.Tanh())
-                for in_dim, out_dim in zip(input_layers[:-1], hidden_layers)
+                for in_dim, out_dim in zip(input_layers[:-1], input_layers[1:])
             ],
             layer_init(nn.Linear(input_layers[-1], 1), std=1.0),
         )
         self.actor = nn.Sequential(
-            features_extractor,
             *[
                 nn.Sequential(layer_init(nn.Linear(in_dim, out_dim)), nn.Tanh())
-                for in_dim, out_dim in zip(input_layers[:-1], hidden_layers)
+                for in_dim, out_dim in zip(input_layers[:-1], input_layers[1:])
             ],
             layer_init(nn.Linear(input_layers[-1], action_dim), std=1.0),
         )
 
     def get_value(self, x):
+        x = (x - self.observation_space.low)/(self.observation_space.high - self.observation_space.low)
         return self.critic(x)
 
     def get_action_and_value(self, x, action=None, deterministic=False):
+        x = (x - self.observation_space.low)/(self.observation_space.high - self.observation_space.low)
         action_mean = self.actor(x)
         action_std = torch.ones_like(action_mean) * self.log_std.exp()
         distribution = Normal(action_mean, action_std)
@@ -181,25 +165,27 @@ class Agent(nn.Module):
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
-    controls = {"yaw": (-args.yaw_max, args.yaw_max, args.action_bound)}
-    env = envs.make(
-        args.env_id,
-        controls=controls, 
-        max_num_steps=args.total_timesteps, 
-        reward_shaper=FilteredStep(threshold=args.reward_tol)
-    )
-    args.num_agents = env.num_turbines
+    controls = ["yaw"]
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
+    env = envs.make(
+        args.env_id,
+        controls=controls, 
+        max_num_steps=args.num_steps,
+    )
+    args.num_agents = env.num_turbines
+    args.reward_shaping = ""
+    # reward_shaper.name
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
-        os.environ["HTTPS_PROXY"] = "http://irsrvpxw1-std:8082"
+        # os.environ["HTTPS_PROXY"] = "http://irsrvpxw1-std:8082"
         import wandb
+        wandb.tensorboard.patch(root_logdir=f"runs/{run_name}", pytorch=False, tensorboard_x=False, save=False)
         wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity,
-            sync_tensorboard=True,
+            # sync_tensorboard=True,
             config=vars(args),
             name=run_name,
             monitor_gym=True,
@@ -218,21 +204,14 @@ if __name__ == "__main__":
 
     
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-    local_obs_space = env.observation_space(env.possible_agents[0])
-    global_obs_space = env.state_space
-    action_space = env.action_space(env.possible_agents[0])["yaw"]
-    partial_obs_extractor = DfacSPaceExtractor(local_obs_space, global_obs_space)
-    partial_obs_space = partial_obs_extractor.observation_space
-    features_extractor_params = {
-        "order":args.fourier_order,
-        "hyper": args.fourier_hyper,
-        "learnable": args.fourier_learnable,
-        "max_dim": args.fourier_maxdim,
-        "seed": args.seed,
-    }
+    obs_space = env.observation_space(env.possible_agents[0])
+    action_space_extractor = VectorExtractor(env.action_space(env.possible_agents[0]))
+    partial_obs_extractor = VectorExtractor(obs_space)
+    partial_obs_space = partial_obs_extractor.space
+    action_space = action_space_extractor.space
     hidden_layer_nn = [] if not isinstance(args.hidden_layer_nn, tuple) else args.hidden_layer_nn
     agents = [
-        Agent(partial_obs_space, action_space, hidden_layer_nn, features_extractor_params).to(device)
+        Agent(partial_obs_space, action_space, hidden_layer_nn).to(device)
         for _ in range(args.num_agents)
     ]
     optimizers = [
@@ -253,9 +232,13 @@ if __name__ == "__main__":
     start_time = time.time()
     #TODO: put seed back 
     # env.reset(seed=args.seed)
-    env.reset(options={"wind_speed": 8, "wind_direction": 270})
 
     for iteration in range(1, args.num_iterations + 1):
+        env.reset(options={"wind_speed": 8, "wind_direction": 270})
+        # env.reset(args.seed+iteration)
+        # env.reset(args.seed)
+        cumul_rewards = 0
+        cumul_power = 0
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
@@ -277,11 +260,11 @@ if __name__ == "__main__":
 
             # ALGO LOGIC: action logic
             powers = []
+
             with torch.no_grad():
                 for idagent, agent in enumerate(agents):
                     last_obs, reward, terminations, truncations, infos = env.last()
-                    global_obs = env.state()
-                    last_obs = torch.Tensor(partial_obs_extractor(last_obs, global_obs)).to(device)
+                    last_obs = torch.Tensor(partial_obs_extractor(last_obs)).to(device)
                     action, logprob, _, value = agent.get_action_and_value(last_obs)
                     last_done = np.logical_or(terminations, truncations)
                     last_done = torch.Tensor([last_done.astype(int)]).to(device)
@@ -297,15 +280,21 @@ if __name__ == "__main__":
                         writer.add_scalar(f"farm/power_T{idagent}", infos["power"], global_step)
                     if "load" in infos:
                         writer.add_scalar(f"farm/load_T{idagent}", sum(np.abs(infos["load"])), global_step)
-                        writer.add_scalar(f"farm/controls/yaw_T{idagent}", last_obs[0].item(), global_step)
+                    writer.add_scalar(f"farm/controls/yaw_T{idagent}", last_obs[0].item(), global_step)
 
                     # store next action
-                    env.step(make_yaw_action(action))
+                    env.step(action_space_extractor.make_dict(action))
                     actions[step, :, idagent] = action
+                writer.add_scalar(f"farm/reward", float(reward[0]), global_step)
             
-            writer.add_scalar(f"farm/power_total", sum(powers), global_step)
-            writer.add_scalar(f"farm/reward", float(reward[0]), global_step)
+            if "power" in infos:
+                writer.add_scalar(f"farm/power_total", sum(powers), global_step)
+                cumul_power += sum(powers)
+            cumul_rewards += float(reward[0])
 
+
+        writer.add_scalar(f"farm/episode_reward", float(cumul_rewards), global_step)
+        writer.add_scalar(f"farm/episode_power", float(cumul_power) / args.num_steps, global_step)
         # bootstrap value for all agents and compute GAE
         lastgaelam = torch.zeros((args.num_envs, args.num_agents)).to(device)
         advantages = torch.zeros_like(rewards).to(device)
@@ -411,13 +400,3 @@ if __name__ == "__main__":
     # Prepare plots
     fig = plot_env_history(env)
     fig.savefig(f"runs/{run_name}/plot.png")
-
-    print("stop")
-
-
-
-
-
-
-
-
