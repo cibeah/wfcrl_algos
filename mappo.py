@@ -204,7 +204,7 @@ if __name__ == "__main__":
     args = tyro.cli(Args)
     controls = {"yaw": (-args.yaw_max, args.yaw_max, args.action_bound)}
     env = envs.make(
-        "Dec_Turb3_Row1_Floris",
+        args.env_id,
         controls=controls, 
         max_num_steps=args.total_timesteps, 
         reward_shaper=FilteredStep(threshold=args.reward_tol)

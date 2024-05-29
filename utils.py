@@ -57,3 +57,51 @@ def get_wake_delays(cx, cy, uref, phiref=0, gamma=4, stab_time = 80, cutoff_x=20
             if (cx[j] > cx[i]) and (cx[j] < cx[i] + cutoff_x) and np.abs(cy[j] - cy[i]) < cutoff_y:
                 D[i,j] = max(stab_time, gamma * (cx[j] - cx[i]) / uref)
     return D
+
+def multi_agent_step_routine(env, policies):
+    r = {agent: 0 for agent in env.possible_agents}
+    for agent in env.agent_iter():
+        observation, reward, termination, truncation, info = env.last()
+        r[agent] += reward
+        action = policies[env.agent_name_mapping[agent]](observation)
+        env.step(action)
+    return r
+
+def prepare_eval_windrose(path, num_bins=5):
+    df = pd.read_csv(path)
+    wd = df["wd"].values % 360
+    wd = (wd + 60) % 360
+    ws = df["ws"].values
+    counts, wd_bins, ws_bins =  np.histogram2d(wd, ws, bins=5)
+    freq = counts / np.sum(counts)
+    return freq, wd_bins, ws_bins
+    
+
+def eval_wind_rose(env, policies, wind_rose):
+    """
+    Obtained from SMARTEOLE data centered on turbine row
+
+    train = pd.read_csv(path_to_smarteole_data)
+    train["wd"] = train["wd"] % 360
+    wd = (train["wd"] + 60) % 360
+    wd_nums, wd_bins, _ = plt.hist(wd.values, bins=10)
+    ws_nums, ws_bins, _ = plt.hist(train["ws"].values, bins=10)
+    """
+    
+    freq, wd_bins, ws_bins = wind_rose
+    wd_values = (wd_bins[:-1] + wd_bins[1:])/2
+    ws_values = (ws_bins[:-1] + ws_bins[1:])/2
+    num_episodes = freq.size
+    print(f"Evaluating on {num_episodes} episodes")
+    episode_rewards = []
+    score = 0
+
+    for i, wd in enumerate(wd_values):
+        for j, ws in enumerate(ws_values):
+            env.reset(options={"wind_speed": ws, "wind_direction": wd})
+            r = multi_agent_step_routine(env, policies)
+            # all policies have received the same reward
+            r = float(r[env.possible_agents[0]])
+            episode_rewards.append(r)
+            score += freq[i, j] * r
+    return score, np.array(episode_rewards)
