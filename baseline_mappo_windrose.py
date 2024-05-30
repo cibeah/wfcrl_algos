@@ -92,6 +92,8 @@ class Args:
     """Toggle learning rate annealing for policy and value networks"""
     wind_data: str = "data/smarteole.csv"
     """Path to wind data for wind rose evaluation"""
+    freq_eval: int = 10
+    """Number of iterations between eval"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -184,6 +186,7 @@ if __name__ == "__main__":
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+    model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
     # TRY NOT TO MODIFY
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -426,10 +429,24 @@ if __name__ == "__main__":
         if iteration % args.freq_eval == 0:
             print(f"Evaluating at iteration {iteration}")
             eval_score, eval_rewards = eval_wind_rose(env_eval, policies, wind_rose_eval)
-            writer.add_scalar(f"eval/eval_score", float(cumul_rewards), global_step)
+            writer.add_scalar(f"eval/eval_score", eval_score, global_step)
             writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
+            for idagent, agent in enumerate(agents):
+                torch.save(agent.state_dict(), model_path+f"_{idagent}")
+            print(f"model saved to {model_path}")
         
+    print(f"END - Evaluating at iteration {iteration}")
+    eval_score, eval_rewards = eval_wind_rose(env_eval, policies, wind_rose_eval)
+    writer.add_scalar(f"eval/eval_score", eval_score, global_step)
+    writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
+    for idagent, agent in enumerate(agents):
+        torch.save(agent.state_dict(), model_path+f"_{idagent}")
+    print(f"model saved to {model_path}")
+    for idagent, agent in enumerate(agents):
+        torch.save(agent.state_dict(), model_path+f"_{idagent}")
+        print(f"model saved to {model_path}")
     env.close()
+    env_eval.close()
     writer.close()
 
 

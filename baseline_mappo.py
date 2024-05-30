@@ -34,7 +34,7 @@ class Args:
     """if toggled, cuda will be enabled by default"""
     track: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "cleanRL"
+    wandb_project_name: str = "Benchmark-WFCRL"
     """the wandb's project name"""
     wandb_entity: str = None
     """the entity (team) of wandb's project"""
@@ -182,6 +182,7 @@ if __name__ == "__main__":
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+    model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
     # TRY NOT TO MODIFY
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -388,8 +389,7 @@ if __name__ == "__main__":
         writer.add_scalar(f"losses/value_loss", global_v_loss.item(), global_step)
         writer.add_scalar(f"losses/explained_variance", explained_var, global_step)
     
-        if args.save_model:
-            model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+        if (iteration % 5 == 0) and args.save_model:
             for idagent, agent in enumerate(agents):
                 torch.save(agent.state_dict(), model_path+f"_{idagent}")
             print(f"model saved to {model_path}")
@@ -398,6 +398,9 @@ if __name__ == "__main__":
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         
     env.close()
+    for idagent, agent in enumerate(agents):
+        torch.save(agent.state_dict(), model_path+f"_{idagent}")
+        print(f"model saved to {model_path}")
     writer.close()
 
 

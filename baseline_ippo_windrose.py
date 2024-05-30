@@ -32,13 +32,13 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    track: bool = False
+    track: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "Benchmark-WFCRL"
     """the wandb's project name"""
     wandb_entity: str = None
     """the entity (team) of wandb's project"""
-    save_model: bool = False
+    save_model: bool = True
     """whether to save model into the `runs/{run_name}` folder"""
 
     # Algorithm specific arguments
@@ -199,6 +199,7 @@ if __name__ == "__main__":
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+    model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
     # TRY NOT TO MODIFY
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -408,12 +409,7 @@ if __name__ == "__main__":
             writer.add_scalar(f"losses/agent_{idagent}/approx_kl", approx_kl.item(), global_step)
             writer.add_scalar(f"losses/agent_{idagent}/clipfrac", np.mean(clipfracs), global_step)
             writer.add_scalar(f"losses/agent_{idagent}/explained_variance", explained_var, global_step)
-        
-            if args.save_model:
-                model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-                for idagent, agent in enumerate(agents):
-                    torch.save(agent.state_dict(), model_path+f"_{idagent}")
-                print(f"model saved to {model_path}")
+
         
         # print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
@@ -423,8 +419,23 @@ if __name__ == "__main__":
             eval_score, eval_rewards = eval_wind_rose(env_eval, policies, wind_rose_eval)
             writer.add_scalar(f"eval/eval_score", eval_score, global_step)
             writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
+            for idagent, agent in enumerate(agents):
+                torch.save(agent.state_dict(), model_path+f"_{idagent}")
+            print(f"model saved to {model_path}")
         
+    
+    print(f"END - Evaluating at iteration {iteration}")
+    eval_score, eval_rewards = eval_wind_rose(env_eval, policies, wind_rose_eval)
+    writer.add_scalar(f"eval/eval_score", eval_score, global_step)
+    writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
+    for idagent, agent in enumerate(agents):
+        torch.save(agent.state_dict(), model_path+f"_{idagent}")
+    print(f"model saved to {model_path}")
+    for idagent, agent in enumerate(agents):
+        torch.save(agent.state_dict(), model_path+f"_{idagent}")
+        print(f"model saved to {model_path}")
     env.close()
+    env_eval.close()
     writer.close()
 
 

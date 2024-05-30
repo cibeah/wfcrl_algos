@@ -196,6 +196,7 @@ if __name__ == "__main__":
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+    model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
     # TRY NOT TO MODIFY
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -384,16 +385,18 @@ if __name__ == "__main__":
             writer.add_scalar(f"losses/agent_{idagent}/clipfrac", np.mean(clipfracs), global_step)
             writer.add_scalar(f"losses/agent_{idagent}/explained_variance", explained_var, global_step)
         
-            if args.save_model:
-                model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-                for idagent, agent in enumerate(agents):
-                    torch.save(agent.state_dict(), model_path+f"_{idagent}")
-                print(f"model saved to {model_path}")
+        if (iteration % 5 == 0) and args.save_model:
+            for idagent, agent in enumerate(agents):
+                torch.save(agent.state_dict(), model_path+f"_{idagent}")
+            print(f"model saved to {model_path}")
         
         # print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         
     env.close()
+    for idagent, agent in enumerate(agents):
+        torch.save(agent.state_dict(), model_path+f"_{idagent}")
+        print(f"model saved to {model_path}")
     writer.close()
 
 
