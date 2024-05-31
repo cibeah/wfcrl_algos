@@ -163,7 +163,7 @@ class Agent(nn.Module):
         action_mean = self.actor(x)
         action_std = torch.ones_like(action_mean) * self.log_std.exp()
         distribution = Normal(action_mean, action_std)
-        action = distribution.mode() if deterministic else distribution.rsample()
+        action = distribution.mode if deterministic else distribution.rsample()
         return action, distribution.log_prob(action).sum(-1), distribution.entropy()
 
 
@@ -245,8 +245,6 @@ if __name__ == "__main__":
         ) 
         for agent in agents
     ]
-    eval_score, _ = eval_wind_rose(env_eval, policies, wind_rose_eval)
-
 
     # ALGO Logic: Storage setup
     global_obs = torch.zeros((args.num_steps+1, args.num_envs) + global_obs_space.shape).to(device)
