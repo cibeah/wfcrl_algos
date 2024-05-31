@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Union
 
+from dotenv import load_dotenv
 import gymnasium as gym
 import numpy as np
 import torch
@@ -187,6 +188,8 @@ if __name__ == "__main__":
     if args.track:
         # os.environ["HTTPS_PROXY"] = "http://irsrvpxw1-std:8082"
         import wandb
+        load_dotenv()
+        wandb.login(key=os.environ["WANDB_API_KEY"])
         wandb.tensorboard.patch(root_logdir=f"runs/{run_name}", pytorch=False, tensorboard_x=False, save=False)
         wandb.init(
             project=args.wandb_project_name,

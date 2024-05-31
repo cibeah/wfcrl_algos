@@ -7,3 +7,4 @@ wfcrl @ git+https://github.com/cibeah/WFCRL.git
 stable-baselines3
 wandb
 seaborn
+python-dotenv
