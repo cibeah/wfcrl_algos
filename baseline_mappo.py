@@ -120,9 +120,15 @@ class SharedCritic(nn.Module):
             ],
             layer_init(nn.Linear(input_layers[-1], 1), std=1.0),
         )
+        self.register_buffer(
+            "observation_low", torch.tensor(observation_space.low, dtype=torch.float32)
+        )
+        self.register_buffer(
+            "observation_high", torch.tensor(observation_space.high, dtype=torch.float32)
+        )
 
     def get_value(self, x):
-        x = (x - self.observation_space.low)/(self.observation_space.high - self.observation_space.low)
+        x = (x - self.observation_low)/(self.observation_high - self.observation_low)
         return self.critic(x)
 
 class Agent(nn.Module):
@@ -141,9 +147,15 @@ class Agent(nn.Module):
             ],
             layer_init(nn.Linear(input_layers[-1], action_dim), std=1.0),
         )
+        self.register_buffer(
+            "observation_low", torch.tensor(observation_space.low, dtype=torch.float32)
+        )
+        self.register_buffer(
+            "observation_high", torch.tensor(observation_space.high, dtype=torch.float32)
+        )
 
     def get_action(self, x, deterministic=False):
-        x = (x - self.observation_space.low)/(self.observation_space.high - self.observation_space.low)
+        x = (x - self.observation_low)/(self.observation_high - self.observation_low)
         action_mean = self.actor(x)
         action_std = torch.ones_like(action_mean) * self.log_std.exp()
         distribution = Normal(action_mean, action_std)
@@ -168,10 +180,11 @@ if __name__ == "__main__":
     if args.track:
         # os.environ["HTTPS_PROXY"] = "http://irsrvpxw1-std:8082"
         import wandb
+        wandb.tensorboard.patch(root_logdir=f"runs/{run_name}", pytorch=False, tensorboard_x=False, save=False)
         wandb.init(
             project=args.wandb_project_name,
             entity=args.wandb_entity,
-            sync_tensorboard=True,
+            # sync_tensorboard=True,
             config=vars(args),
             name=run_name,
             monitor_gym=True,

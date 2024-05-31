@@ -148,13 +148,19 @@ class Agent(nn.Module):
             ],
             layer_init(nn.Linear(input_layers[-1], action_dim), std=1.0),
         )
+        self.register_buffer(
+            "observation_low", torch.tensor(observation_space.low, dtype=torch.float32)
+        )
+        self.register_buffer(
+            "observation_high", torch.tensor(observation_space.high, dtype=torch.float32)
+        )
 
     def get_value(self, x):
-        x = (x - self.observation_space.low)/(self.observation_space.high - self.observation_space.low)
+        x = (x - self.observation_low)/(self.observation_high - self.observation_low)
         return self.critic(x)
 
     def get_action_and_value(self, x, action=None, deterministic=False):
-        x = (x - self.observation_space.low)/(self.observation_space.high - self.observation_space.low)
+        x = (x - self.observation_low)/(self.observation_high - self.observation_low)
         action_mean = self.actor(x)
         action_std = torch.ones_like(action_mean) * self.log_std.exp()
         distribution = Normal(action_mean, action_std)
