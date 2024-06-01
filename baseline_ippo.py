@@ -166,7 +166,7 @@ class Agent(nn.Module):
         action_std = torch.ones_like(action_mean) * self.log_std.exp()
         distribution = Normal(action_mean, action_std)
         if action is None:
-            action = distribution.mode() if deterministic else distribution.rsample()
+            action = distribution.mode if deterministic else distribution.rsample()
         return action, distribution.log_prob(action).sum(-1), distribution.entropy(), self.critic(x)
 
 

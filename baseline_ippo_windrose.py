@@ -95,7 +95,7 @@ class Args:
     """Toggle learning rate annealing for policy and value networks"""
     wind_data: str = "data/smarteole.csv"
     """Path to wind data for wind rose evaluation"""
-    freq_eval: int = 10
+    freq_eval: int = 50
     """Number of iterations between eval"""
 
     # to be filled in runtime
@@ -429,8 +429,9 @@ if __name__ == "__main__":
             eval_score, eval_rewards = eval_wind_rose(env_eval, policies, wind_rose_eval)
             writer.add_scalar(f"eval/eval_score", eval_score, global_step)
             writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
-            for idagent, agent in enumerate(agents):
-                torch.save(agent.state_dict(), model_path+f"_{idagent}")
+            if args.save_model:
+                for idagent, agent in enumerate(agents):
+                    torch.save(agent.state_dict(), model_path+f"_{idagent}")
             print(f"model saved to {model_path}")
         
     
@@ -441,9 +442,6 @@ if __name__ == "__main__":
     for idagent, agent in enumerate(agents):
         torch.save(agent.state_dict(), model_path+f"_{idagent}")
     print(f"model saved to {model_path}")
-    for idagent, agent in enumerate(agents):
-        torch.save(agent.state_dict(), model_path+f"_{idagent}")
-        print(f"model saved to {model_path}")
     env.close()
     env_eval.close()
     writer.close()

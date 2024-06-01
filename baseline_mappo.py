@@ -155,12 +155,13 @@ class Agent(nn.Module):
             "observation_high", torch.tensor(observation_space.high, dtype=torch.float32)
         )
 
-    def get_action(self, x, deterministic=False):
+    def get_action(self, x, action=None, deterministic=False):
         x = (x - self.observation_low)/(self.observation_high - self.observation_low)
         action_mean = self.actor(x)
         action_std = torch.ones_like(action_mean) * self.log_std.exp()
         distribution = Normal(action_mean, action_std)
-        action = distribution.mode() if deterministic else distribution.rsample()
+        if action is None:
+            action = distribution.mode if deterministic else distribution.rsample()
         return action, distribution.log_prob(action).sum(-1), distribution.entropy()
 
 
@@ -337,7 +338,7 @@ if __name__ == "__main__":
                 mb_inds = b_inds[start:end]
 
                 for idagent, agent in enumerate(agents):
-                    _, newlogprob, entropy = agent.get_action(b_obs[mb_inds, idagent])
+                    _, newlogprob, entropy = agent.get_action(b_obs[mb_inds, idagent], b_actions[mb_inds, idagent])
                     logratio = newlogprob - b_logprobs[mb_inds, idagent]
                     ratio = logratio.exp()
 
