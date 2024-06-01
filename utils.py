@@ -58,12 +58,15 @@ def get_wake_delays(cx, cy, uref, phiref=0, gamma=4, stab_time = 80, cutoff_x=20
                 D[i,j] = max(stab_time, gamma * (cx[j] - cx[i]) / uref)
     return D
 
-def multi_agent_step_routine(env, policies):
+def multi_agent_step_routine(env, policies, get_action=None):
     r = {agent: 0 for agent in env.possible_agents}
+    if get_action is None:
+        def get_action(agt, obs):
+            return agt(obs)
     for agent in env.agent_iter():
         observation, reward, termination, truncation, info = env.last()
         r[agent] += reward
-        action = policies[env.agent_name_mapping[agent]](observation)
+        action = get_action(policies[env.agent_name_mapping[agent]], observation)
         env.step(action)
     return r
 
@@ -77,7 +80,7 @@ def prepare_eval_windrose(path, num_bins=5):
     return freq, wd_bins, ws_bins
     
 
-def eval_wind_rose(env, policies, wind_rose):
+def eval_wind_rose(env, policies, wind_rose, get_action=None):
     """
     Obtained from SMARTEOLE data centered on turbine row
 
@@ -89,6 +92,7 @@ def eval_wind_rose(env, policies, wind_rose):
     """
     
     freq, wd_bins, ws_bins = wind_rose
+    freq = np.atleast_2d(freq)
     wd_values = (wd_bins[:-1] + wd_bins[1:])/2
     ws_values = (ws_bins[:-1] + ws_bins[1:])/2
     num_episodes = freq.size
@@ -99,7 +103,7 @@ def eval_wind_rose(env, policies, wind_rose):
     for i, wd in enumerate(wd_values):
         for j, ws in enumerate(ws_values):
             env.reset(options={"wind_speed": ws, "wind_direction": wd})
-            r = multi_agent_step_routine(env, policies)
+            r = multi_agent_step_routine(env, policies, get_action=get_action)
             # all policies have received the same reward
             r = float(r[env.possible_agents[0]])
             episode_rewards.append(r)

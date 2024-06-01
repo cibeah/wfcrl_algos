@@ -447,9 +447,9 @@ if __name__ == "__main__":
                 for idagent, agent in enumerate(agents):
                     torch.save(agent.state_dict(), model_path+f"_{idagent}")
             print(f"model saved to {model_path}")
-        
+
     print(f"END - Evaluating at iteration {iteration}")
-    eval_score, eval_rewards = eval_wind_rose(env_eval, agents, wind_rose_eval)
+    eval_score, eval_rewards = eval_wind_rose(env_eval, agents, wind_rose_eval, get_deterministic_action)
     writer.add_scalar(f"eval/eval_score", eval_score, global_step)
     writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
     for idagent, agent in enumerate(agents):

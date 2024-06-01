@@ -241,17 +241,6 @@ if __name__ == "__main__":
     )
     wind_rose_eval = prepare_eval_windrose(args.wind_data, num_bins=5)
     # First eval
-    policies = [
-        lambda obs : 
-        action_space_extractor.make_dict(
-            agent.get_action_and_value(
-                torch.Tensor(partial_obs_extractor(obs)).to(device), 
-                deterministic=True
-            )[0]
-        )
-        for agent in agents
-    ]
-
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps+1, args.num_envs, args.num_agents) + partial_obs_space.shape).to(device)
     actions = torch.zeros((args.num_steps+1, args.num_envs, args.num_agents) + action_space.shape).to(device)
@@ -263,10 +252,15 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
+
+    def get_deterministic_action(agent, observation):
+        observation = torch.Tensor(partial_obs_extractor(observation)).to(device)
+        action, _, _, _= agent.get_action_and_value(observation, deterministic=True)
+        return action_space_extractor.make_dict(action)
     #TODO: put seed back 
     # env.reset(seed=args.seed)
 
-    eval_score, eval_rewards = eval_wind_rose(env_eval, policies, wind_rose_eval)
+    eval_score, eval_rewards = eval_wind_rose(env_eval, agents, wind_rose_eval, get_deterministic_action)
     writer.add_scalar(f"eval/eval_score", eval_score, global_step)
     writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
 
@@ -426,17 +420,16 @@ if __name__ == "__main__":
 
         if iteration % args.freq_eval == 0:
             print(f"Evaluating at iteration {iteration}")
-            eval_score, eval_rewards = eval_wind_rose(env_eval, policies, wind_rose_eval)
+            eval_score, eval_rewards = eval_wind_rose(env_eval, agents, wind_rose_eval, get_deterministic_action)
             writer.add_scalar(f"eval/eval_score", eval_score, global_step)
             writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
             if args.save_model:
                 for idagent, agent in enumerate(agents):
                     torch.save(agent.state_dict(), model_path+f"_{idagent}")
             print(f"model saved to {model_path}")
-        
-    
+
     print(f"END - Evaluating at iteration {iteration}")
-    eval_score, eval_rewards = eval_wind_rose(env_eval, policies, wind_rose_eval)
+    eval_score, eval_rewards = eval_wind_rose(env_eval, agents, wind_rose_eval, get_deterministic_action)
     writer.add_scalar(f"eval/eval_score", eval_score, global_step)
     writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
     for idagent, agent in enumerate(agents):
