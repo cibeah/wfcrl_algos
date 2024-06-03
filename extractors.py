@@ -32,7 +32,7 @@ class VectorExtractor(nn.Module):
         )
 
     def forward(self, dic):
-        return np.concatenate([np.atleast_2d(value) for value in dic.values()],1).squeeze()
+        return np.concatenate([np.atleast_2d(dic[key]) for key in self.keys],1).squeeze()
     
     def make_dict(self, vector):
         return {
