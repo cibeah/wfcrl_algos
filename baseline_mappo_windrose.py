@@ -446,6 +446,7 @@ if __name__ == "__main__":
             if args.save_model:
                 for idagent, agent in enumerate(agents):
                     torch.save(agent.state_dict(), model_path+f"_{idagent}")
+                torch.save(shared_critic.state_dict(), model_path+f"_critic")
             print(f"model saved to {model_path}")
 
     print(f"END - Evaluating at iteration {iteration}")
@@ -454,6 +455,7 @@ if __name__ == "__main__":
     writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
     for idagent, agent in enumerate(agents):
         torch.save(agent.state_dict(), model_path+f"_{idagent}")
+    torch.save(shared_critic.state_dict(), model_path+f"_critic")
     print(f"model saved to {model_path}")
     env.close()
     env_eval.close()

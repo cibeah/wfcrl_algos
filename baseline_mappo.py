@@ -409,6 +409,7 @@ if __name__ == "__main__":
         if (iteration % 5 == 0) and args.save_model:
             for idagent, agent in enumerate(agents):
                 torch.save(agent.state_dict(), model_path+f"_{idagent}")
+            torch.save(shared_critic.state_dict(), model_path+f"_critic")
             print(f"model saved to {model_path}")
         
         # print("SPS:", int(global_step / (time.time() - start_time)))
@@ -417,7 +418,8 @@ if __name__ == "__main__":
     env.close()
     for idagent, agent in enumerate(agents):
         torch.save(agent.state_dict(), model_path+f"_{idagent}")
-        print(f"model saved to {model_path}")
+    torch.save(shared_critic.state_dict(), model_path+f"_critic")
+    print(f"model saved to {model_path}")
     writer.close()
 
 
