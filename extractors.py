@@ -10,18 +10,20 @@ from torch.nn.parameter import Parameter
 
 class VectorExtractor(nn.Module):
     """dict-vector mapping for vectors OF DIMENSION 1"""
-    def __init__(self, space, filter_out=[]):
+    def __init__(self, space, filter_out=["pitch", "torque"]):
         super().__init__()
         lows = []
         highs = []
         size = 0
+        indice = 0
         self.keys = OrderedDict()
-        for item, space in space.items():
+        for item, item_space in space.items():
             if item not in filter_out:
-                lows.append(space.low)
-                highs.append(space.high)
-                self.keys[item] = [size, size + space.shape[0]]
-            size += space.shape[0]
+                lows.append(item_space.low)
+                highs.append(item_space.high)
+                self.keys[item] = [indice, indice + item_space.shape[0]]
+                size += item_space.shape[0]
+            indice += item_space.shape[0]
 
         self.space = gym.spaces.Box(
             low=np.concatenate(lows),
