@@ -7,6 +7,7 @@ from typing import Union
 from dotenv import load_dotenv
 import gymnasium as gym
 import numpy as np
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -227,6 +228,11 @@ if __name__ == "__main__":
     ]
     critic_optimizer = optim.Adam(shared_critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
+    if args.pretrained_models is not None:
+        assert Path(args.pretrained_models).exists()
+        for idagent, agent in enumerate(agents):
+            params = torch.load(Path(args.pretrained_models) / f"model_{idagent}", map_location='cpu')
+            agent.load_state_dict(params)
 
     # ALGO Logic: Storage setup
     global_obs = torch.zeros((args.num_steps+1, args.num_envs) + global_obs_space.shape).to(device)

@@ -7,6 +7,7 @@ from typing import Union
 from dotenv import load_dotenv
 import gymnasium as gym
 import numpy as np
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -75,7 +76,7 @@ class Args:
     """the number of parallel game environments"""
 
     # DFAC arguments
-    pretrained_models: str = None
+    pretrained_models: str = "runs/Dec_Turb3_Row1_Floris__baseline_ippo_windrose__4__1717142478"
     """Path to pretrained models"""
     kl_coef:  float = 0.0
     """Weighing coefficient for KL term in loss """ 
@@ -228,6 +229,12 @@ if __name__ == "__main__":
         optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
         for agent in agents
     ]
+
+    if args.pretrained_models is not None:
+        assert Path(args.pretrained_models).exists()
+        for idagent, agent in enumerate(agents):
+            params = torch.load(Path(args.pretrained_models) / f"model_{idagent}", map_location='cpu')
+            agent.load_state_dict(params)
 
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps+1, args.num_envs, args.num_agents) + partial_obs_space.shape).to(device)
