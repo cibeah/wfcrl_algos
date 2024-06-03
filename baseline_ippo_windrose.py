@@ -7,6 +7,7 @@ from typing import Union
 from dotenv import load_dotenv
 import gymnasium as gym
 import numpy as np
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -232,6 +233,12 @@ if __name__ == "__main__":
         optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
         for agent in agents
     ]
+
+    if args.pretrained_models is not None:
+        assert Path(args.pretrained_models).exists()
+        for idagent, agent in enumerate(agents):
+            params = torch.load(Path(args.pretrained_models) / f"model_{idagent}", map_location='cpu')
+            agent.load_state_dict(params)
 
     # EVAL: prepare wind rose
     env_eval = envs.make(

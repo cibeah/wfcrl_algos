@@ -45,7 +45,7 @@ class Args:
     """whether to save model into the `runs/{run_name}` folder"""
 
     # Algorithm specific arguments
-    env_id: str = "Dec_Turb3_Row1_Floris"
+    env_id: str = "Dec_Turb3_Row1_Fastfarm"
     """the id of the environment"""
     total_timesteps: int = int(1e3)
     """total timesteps of the experiments"""
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
     obs_space = env.observation_space(env.possible_agents[0])
     action_space_extractor = VectorExtractor(env.action_space(env.possible_agents[0]))
-    partial_obs_extractor = VectorExtractor(obs_space)
+    partial_obs_extractor = VectorExtractor(obs_space, filter_out=["pitch", "torque"])
     partial_obs_space = partial_obs_extractor.space
     action_space = action_space_extractor.space
     hidden_layer_nn = [] if not isinstance(args.hidden_layer_nn, tuple) else args.hidden_layer_nn
