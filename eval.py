@@ -77,7 +77,7 @@ class Args:
     """the number of parallel game environments"""
 
     # DFAC arguments
-    pretrained_models: str = "runs/test"
+    pretrained_models: str = "runs/Dec_Turb3_Row1_Floris__baseline_mappo__0__1717297654" #"runs/test"
     """Path to pretrained models"""
     kl_coef:  float = 0.0
     """Weighing coefficient for KL term in loss """ 
@@ -192,10 +192,13 @@ if __name__ == "__main__":
         yaws, powers, loads
 
         # Prepare plots
-        fig = plot_env_history(env)
-        fig.savefig(f"runs/{run_name}/plot_iter{iteration}.png")
         with open(f"runs/{run_name}/history_{iteration}.pickle", 'wb') as f:
             pickle.dump(env.history, f, pickle.HIGHEST_PROTOCOL)
+        try:
+            fig = plot_env_history(env)
+            fig.savefig(f"runs/{run_name}/plot_iter{iteration}.png")
+        except:
+            print("Could not save figure.")
     
     env.close()
     # writer.close()
