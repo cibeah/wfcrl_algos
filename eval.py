@@ -163,9 +163,14 @@ if __name__ == "__main__":
         for _ in range(args.num_agents)
     ]
 
-    assert Path(args.pretrained_models).exists()
+    args.pretrained_models = Path(args.pretrained_models)
+    assert args.pretrained_models.exists()
     for idagent, agent in enumerate(agents):
-        params = torch.load(Path(args.pretrained_models) / f"model_{idagent}", map_location='cpu')
+        try:
+            path = list(args.pretrained_models.glob(f"*model_{idagent}"))[0]
+        except:
+            raise FileNotFoundError(f"No file in model_{idagent} found under folder {args.pretrained_models}")
+        params = torch.load(str(path), map_location='cpu')
         agent.load_state_dict(params)
 
     

@@ -234,11 +234,15 @@ if __name__ == "__main__":
         for agent in agents
     ]
 
-    if args.pretrained_models is not None:
-        assert Path(args.pretrained_models).exists()
-        for idagent, agent in enumerate(agents):
-            params = torch.load(Path(args.pretrained_models) / f"model_{idagent}", map_location='cpu')
-            agent.load_state_dict(params)
+    args.pretrained_models = Path(args.pretrained_models)
+    assert args.pretrained_models.exists()
+    for idagent, agent in enumerate(agents):
+        try:
+            path = list(args.pretrained_models.glob(f"*model_{idagent}"))[0]
+        except:
+            raise FileNotFoundError(f"No file in model_{idagent} found under folder {args.pretrained_models}")
+        params = torch.load(str(path), map_location='cpu')
+        agent.load_state_dict(params)
 
     # EVAL: prepare wind rose
     env_eval = envs.make(

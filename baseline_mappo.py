@@ -228,11 +228,15 @@ if __name__ == "__main__":
     ]
     critic_optimizer = optim.Adam(shared_critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    if args.pretrained_models is not None:
-        assert Path(args.pretrained_models).exists()
-        for idagent, agent in enumerate(agents):
-            params = torch.load(Path(args.pretrained_models) / f"model_{idagent}", map_location='cpu')
-            agent.load_state_dict(params)
+    args.pretrained_models = Path(args.pretrained_models)
+    assert args.pretrained_models.exists()
+    for idagent, agent in enumerate(agents):
+        try:
+            path = list(args.pretrained_models.glob(f"*model_{idagent}"))[0]
+        except:
+            raise FileNotFoundError(f"No file in model_{idagent} found under folder {args.pretrained_models}")
+        params = torch.load(str(path), map_location='cpu')
+        agent.load_state_dict(params)
 
     # ALGO Logic: Storage setup
     global_obs = torch.zeros((args.num_steps+1, args.num_envs) + global_obs_space.shape).to(device)
