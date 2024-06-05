@@ -256,6 +256,10 @@ if __name__ == "__main__":
     #TODO: put seed back 
     # env.reset(seed=args.seed)
 
+    if args.no_reset:
+        # reset only once at the beginning
+        env.reset(options={"wind_speed": 8, "wind_direction": 270})
+
     for iteration in range(1, args.num_iterations + 1):
         if not args.no_reset:
             env.reset(options={"wind_speed": 8, "wind_direction": 270})
