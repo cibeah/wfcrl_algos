@@ -74,6 +74,8 @@ class Args:
     """the target KL divergence threshold"""
     num_envs: int = 1
     """the number of parallel game environments"""
+    no_reset: bool = False
+    """Will not reset the environment to simulate online learning with infinite horiozn"""
 
     # DFAC arguments
     pretrained_models: str = "runs/Dec_Turb3_Row1_Floris__baseline_ippo_windrose__4__1717142478"
@@ -180,7 +182,7 @@ if __name__ == "__main__":
     env = envs.make(
         args.env_id,
         controls=controls, 
-        max_num_steps=args.num_steps,
+        max_num_steps=args.total_timesteps if args.no_reset else args.num_steps,
     )
     args.num_agents = env.num_turbines
     args.reward_shaping = ""
@@ -255,7 +257,8 @@ if __name__ == "__main__":
     # env.reset(seed=args.seed)
 
     for iteration in range(1, args.num_iterations + 1):
-        env.reset(options={"wind_speed": 8, "wind_direction": 270})
+        if not args.no_reset:
+            env.reset(options={"wind_speed": 8, "wind_direction": 270})
         # env.reset(args.seed+iteration)
         # env.reset(args.seed)
         cumul_rewards = 0
