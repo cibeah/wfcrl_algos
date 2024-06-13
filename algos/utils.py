@@ -75,6 +75,13 @@ def multi_agent_step_routine(env, policies, get_action=None):
     return r
 
 def prepare_eval_windrose(path, num_bins=5):
+    """
+    to plot the 2D histogram:
+    ax = sns.heatmap(freq, annot=True, cbar=False)
+    ax.set_xticks(np.arange(6), labels=np.round(ws_bins).astype(int))
+    ax.set_yticks(np.arange(6), labels=np.round(wd_bins).astype(int))
+    ax.set(xlabel="speed", ylabel="direction")
+    """
     df = pd.read_csv(path)
     wd = df["wd"].values % 360
     wd = (wd + 60) % 360

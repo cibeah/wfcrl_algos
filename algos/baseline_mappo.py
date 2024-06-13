@@ -21,7 +21,7 @@ from wfcrl.rewards import StepPercentage, RewardShaper
 from wfcrl import environments as envs
 
 from extractors import VectorExtractor
-from utils import plot_env_history, prepare_eval_windrose, eval_wind_rose
+from utils import plot_env_history
 
 
 @dataclass
@@ -92,10 +92,6 @@ class Args:
     """number of available rewards before update"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
-    wind_data: str = "data/smarteole.csv"
-    """Path to wind data for wind rose evaluation"""
-    freq_eval: int = 50
-    """Number of iterations between eval"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -169,15 +165,6 @@ class Agent(nn.Module):
             action = distribution.mode if deterministic else distribution.rsample()
         return action, distribution.log_prob(action).sum(-1), distribution.entropy()
 
-    def get_action(self, x, action=None, deterministic=False):
-        x = (x - self.observation_low)/(self.observation_high - self.observation_low)
-        action_mean = self.actor(x)
-        action_std = torch.ones_like(action_mean) * self.log_std.exp()
-        distribution = Normal(action_mean, action_std)
-        if action is None:
-            action = distribution.mode if deterministic else distribution.rsample()
-        return action, distribution.log_prob(action).sum(-1), distribution.entropy()
-
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -241,24 +228,17 @@ if __name__ == "__main__":
     ]
     critic_optimizer = optim.Adam(shared_critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    args.pretrained_models = Path(args.pretrained_models)
-    assert args.pretrained_models.exists()
-    for idagent, agent in enumerate(agents):
-        try:
-            path = list(args.pretrained_models.glob(f"*model_{idagent}"))[0]
-        except:
-            raise FileNotFoundError(f"No file in model_{idagent} found under folder {args.pretrained_models}")
-        params = torch.load(str(path), map_location='cpu')
-        agent.load_state_dict(params)
-            
-    # EVAL: prepare wind rose
-    env_eval = envs.make(
-        args.env_id,
-        controls=controls, 
-        max_num_steps=args.num_steps,
-    )
-    wind_rose_eval = prepare_eval_windrose(args.wind_data, num_bins=5)
-    # First eval
+    if args.pretrained_models is not None:
+        args.pretrained_models = Path(args.pretrained_models)
+        assert args.pretrained_models.exists()
+        for idagent, agent in enumerate(agents):
+            try:
+                path = list(args.pretrained_models.glob(f"*model_{idagent}"))[0]
+            except:
+                raise FileNotFoundError(f"No file in model_{idagent} found under folder {args.pretrained_models}")
+            params = torch.load(str(path), map_location='cpu')
+            agent.load_state_dict(params)
+
     # ALGO Logic: Storage setup
     global_obs = torch.zeros((args.num_steps+1, args.num_envs) + global_obs_space.shape).to(device)
     obs = torch.zeros((args.num_steps+1, args.num_envs, args.num_agents) + partial_obs_space.shape).to(device)
@@ -270,16 +250,7 @@ if __name__ == "__main__":
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
-    start_time = time.time()
-
-    def get_deterministic_action(agent, observation):
-        observation = torch.Tensor(partial_obs_extractor(observation)).to(device)
-        action, _, _ = agent.get_action(observation, deterministic=True)
-        return action_space_extractor.make_dict(action)
-
-    eval_score, eval_rewards = eval_wind_rose(env_eval, agents, wind_rose_eval, get_deterministic_action)
-    writer.add_scalar(f"eval/eval_score", eval_score, global_step)
-    writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
+    start_time = time.time()    
 
     for iteration in range(1, args.num_iterations + 1):
         env.reset(options={"wind_speed": 8, "wind_direction": 270})
@@ -445,31 +416,21 @@ if __name__ == "__main__":
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar(f"losses/value_loss", global_v_loss.item(), global_step)
         writer.add_scalar(f"losses/explained_variance", explained_var, global_step)
+    
+        if (iteration % 5 == 0) and args.save_model:
+            for idagent, agent in enumerate(agents):
+                torch.save(agent.state_dict(), model_path+f"_{idagent}")
+            torch.save(shared_critic.state_dict(), model_path+f"_critic")
+            print(f"model saved to {model_path}")
         
         # print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
-        if iteration % args.freq_eval == 0:
-            print(f"Evaluating at iteration {iteration}")
-            eval_score, eval_rewards = eval_wind_rose(env_eval, agents, wind_rose_eval, get_deterministic_action)
-            writer.add_scalar(f"eval/eval_score", eval_score, global_step)
-            writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
-            if args.save_model:
-                for idagent, agent in enumerate(agents):
-                    torch.save(agent.state_dict(), model_path+f"_{idagent}")
-                torch.save(shared_critic.state_dict(), model_path+f"_critic")
-            print(f"model saved to {model_path}")
-
-    print(f"END - Evaluating at iteration {iteration}")
-    eval_score, eval_rewards = eval_wind_rose(env_eval, agents, wind_rose_eval, get_deterministic_action)
-    writer.add_scalar(f"eval/eval_score", eval_score, global_step)
-    writer.add_histogram("eval/rewards", eval_rewards, global_step=global_step)
+        
+    env.close()
     for idagent, agent in enumerate(agents):
         torch.save(agent.state_dict(), model_path+f"_{idagent}")
     torch.save(shared_critic.state_dict(), model_path+f"_critic")
     print(f"model saved to {model_path}")
-    env.close()
-    env_eval.close()
     writer.close()
 
 

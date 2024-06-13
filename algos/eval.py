@@ -45,7 +45,7 @@ class Args:
     """whether to save model into the `runs/{run_name}` folder"""
 
     # Algorithm specific arguments
-    env_id: str = "Dec_Turb3_Row1_Fastfarm"
+    env_id: str = "Dec_Turb3_Row1_Floris"
     """the id of the environment"""
     total_timesteps: int = int(1e3)
     """total timesteps of the experiments"""
@@ -77,7 +77,7 @@ class Args:
     """the number of parallel game environments"""
 
     # DFAC arguments
-    pretrained_models: str = "runs/Dec_Turb3_Row1_Floris__baseline_mappo__0__1717297654" #"runs/test"
+    pretrained_models: str = "runs/name_of_run"
     """Path to pretrained models"""
     kl_coef:  float = 0.0
     """Weighing coefficient for KL term in loss """ 

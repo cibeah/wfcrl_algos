@@ -24,4 +24,4 @@ echo "Running job on a single cpu"
 source /home/$USER/.bashrc
 conda activate wfcrl_algos
 
-python baseline_ippo_windrose.py --seed ${SLURM_ARRAY_TASK_ID} --env_id Dec_Turb3_Row1_Floris --total_timesteps 50000 --freq_eval 5
+python algos/baseline_ippo_windrose.py --seed ${SLURM_ARRAY_TASK_ID} --env_id Dec_Turb3_Row1_Floris --total_timesteps 50000 --freq_eval 5
